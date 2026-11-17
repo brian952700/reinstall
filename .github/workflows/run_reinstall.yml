@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "reinstall.*"
+      - "trans.sh"
+      - ".github/workflows/run_reinstall.yml"
 jobs:
   run:
     name: 运行主程序
