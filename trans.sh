@@ -526,55 +526,55 @@ get_ttys() {
     wget $confhome/ttys.sh -O- | sh -s $prefix
 }
 
+get_disk_identity() {
+    local disk=$1 attribute value
+    for attribute in wwid device/wwid serial device/serial; do
+        if value=$(cat "/sys/block/$disk/$attribute" 2>/dev/null) && [ -n "$value" ]; then
+            printf '%s:%s' "$attribute" "$value"
+            return
+        fi
+    done
+    return 1
+}
+
 find_xda() {
-    # 出错后再运行脚本，硬盘可能已经格式化，之前记录的分区表 id 无效
-    # 因此找到 xda 后要保存 xda 到 /configs/xda
+    local disk disk_id identity saved_identity matches=0 candidate=
+    local need_install_tool=false
 
-    # 先读取之前保存的
-    if xda=$(get_config xda 2>/dev/null) && [ -n "$xda" ]; then
-        return
-    fi
-
-    # 防止 $main_disk 为空
     if [ -z "$main_disk" ]; then
         error_and_exit "cmdline main_disk is empty."
     fi
 
-    # busybox fdisk/lsblk/blkid 不显示 mbr 分区表 id
-    # 可用以下工具：
-    # fdisk 在 util-linux-misc 里面，占用大
-    # sfdisk 占用小
-    # lsblk
-    # blkid
-
-    tool=sfdisk
-
-    is_have_cmd $tool && need_install_tool=false || need_install_tool=true
-    if $need_install_tool; then
-        apk add $tool
+    saved_identity=$(get_config disk-identity 2>/dev/null) || saved_identity=
+    if ! is_have_cmd sfdisk; then
+        apk add sfdisk
+        need_install_tool=true
     fi
 
-    if [ "$tool" = sfdisk ]; then
-        # sfdisk
-        for disk in $(get_all_disks); do
-            if sfdisk --disk-id "/dev/$disk" | sed 's/0x//' | grep -ix "$main_disk"; then
-                xda=$disk
-                break
-            fi
-        done
-    else
-        # lsblk
-        xda=$(lsblk --nodeps -rno NAME,PTUUID | grep -iw "$main_disk" | awk '{print $1}')
-    fi
-
-    if [ -n "$xda" ]; then
-        set_config xda "$xda"
-    else
-        error_and_exit "Could not find xda: $main_disk"
-    fi
+    for disk in $(get_all_disks); do
+        if [ -n "$saved_identity" ]; then
+            identity=$(get_disk_identity "$disk") || continue
+            [ "$identity" = "$saved_identity" ] || continue
+        else
+            disk_id=$(sfdisk --disk-id "/dev/$disk" 2>/dev/null) || continue
+            printf '%s\n' "${disk_id#0x}" | grep -Fixq -- "$main_disk" || continue
+        fi
+        candidate=$disk
+        matches=$((matches + 1))
+    done
 
     if $need_install_tool; then
-        apk del $tool
+        apk del sfdisk
+    fi
+
+    case "$matches" in
+        0) error_and_exit "Installation disk not found: $main_disk. Check the disk before retrying." ;;
+        1) xda=$candidate ;;
+        *) error_and_exit "Multiple disks match the installation disk: $main_disk. Select the disk explicitly before retrying." ;;
+    esac
+
+    if identity=$(get_disk_identity "$xda"); then
+        set_config disk-identity "$identity"
     fi
 }
 
@@ -8932,6 +8932,12 @@ trans() {
     # xda=sda ash trans.start
     if [ -z "$xda" ]; then
         find_xda
+    elif ! [ -b "/dev/$xda" ] || ! [ -d "/sys/block/$xda" ]; then
+        error_and_exit "Invalid installation disk: $xda"
+    elif identity=$(get_disk_identity "$xda"); then
+        set_config disk-identity "$identity"
+    else
+        rm -f /configs/disk-identity
     fi
 
     # 腾讯云特殊处理

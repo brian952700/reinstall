@@ -167,13 +167,14 @@ call :check_cygwin_installed || (
 )
 
 rem 在c盘根目录下执行 cygpath -ua . 会得到 /cygdrive/c，因此末尾要有 /
-for /f %%a in ('%SystemDrive%\cygwin\bin\cygpath -ua ./') do set thisdir=%%a
+for /f "delims=" %%a in ('%SystemDrive%\cygwin\bin\cygpath -ua ./') do set "thisdir=%%a"
 
 rem 下载 reinstall.sh
 if not exist reinstall.sh (
-    call :download_with_curl %confhome%/reinstall.sh %thisdir%reinstall.sh || goto :download_failed
-    call :chmod a+x %thisdir%reinstall.sh
+    call :download_with_curl "%confhome%/reinstall.sh" "%thisdir%reinstall.sh" || goto :download_failed
 )
+call :validate_shell_script "%thisdir%reinstall.sh" || goto :invalid_shell_script
+call :chmod a+x "%thisdir%reinstall.sh" || goto :invalid_shell_script
 
 rem %* 无法处理 --iso https://x.com/?yyy=123
 rem 为每个参数添加引号，使参数正确传递到 bash
@@ -182,14 +183,14 @@ rem     set "param=!param! "%%~a""
 rem )
 
 rem 转成 unix 格式，避免用户用 windows 记事本编辑后换行符不对
-%SystemDrive%\cygwin\bin\dos2unix -q '%thisdir%reinstall.sh'
+%SystemDrive%\cygwin\bin\dos2unix -q "%thisdir%reinstall.sh" || goto :invalid_shell_script
 
 rem 用 bash 运行
 rem %SystemDrive%\cygwin\bin\bash -l %thisdir%reinstall.sh %* 运行后会清屏
 rem 因此不能用 -l
 rem 这就需要在 reinstall.sh 里运行 source /etc/profile
 rem 或者添加 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
-%SystemDrive%\cygwin\bin\bash %thisdir%reinstall.sh %*
+%SystemDrive%\cygwin\bin\bash "%thisdir%reinstall.sh" %*
 exit /b
 
 rem bits 要求有 Content-Length 才能下载
@@ -221,8 +222,24 @@ rem curl: (77) error setting certificate verify locations:
 rem   CAfile: /etc/ssl/certs/ca-certificates.crt
 rem   CApath: none
 echo Download: %~1 %~2
-%SystemDrive%\cygwin\bin\curl -L --insecure "%~1" -o "%~2"
-exit /b
+setlocal
+set "partial=%~2.%RANDOM%-%RANDOM%.part"
+%SystemDrive%\cygwin\bin\curl -fL --connect-timeout 10 --insecure "%~1" -o "%partial%" || goto :discard_shell_download
+call :validate_shell_script "%partial%" || goto :discard_shell_download
+%SystemDrive%\cygwin\bin\mv -f -- "%partial%" "%~2" || goto :discard_shell_download
+exit /b 0
+
+:discard_shell_download
+%SystemDrive%\cygwin\bin\rm -f -- "%partial%"
+exit /b 1
+
+:validate_shell_script
+%SystemDrive%\cygwin\bin\head -n 1 -- "%~1" | findstr /b /c:"#!/" >nul || exit /b 1
+exit /b 0
+
+:invalid_shell_script
+echo Invalid or unreadable reinstall.sh. Rename or remove the file to download a fresh copy.
+exit /b 1
 
 :chmod
 %SystemDrive%\cygwin\bin\chmod "%~1" "%~2"

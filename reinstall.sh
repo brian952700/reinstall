@@ -5674,6 +5674,12 @@ if is_need_boot_vmlinuz; then
         echo "$target_cfg"
         extlinux_dir="$(dirname "$target_cfg")"
 
+        # 复制文件到 extlinux 工作目录
+        if is_boot_in_separate_partition; then
+            info "copying files to $extlinux_dir"
+            cp_boot_files_to_dir "$extlinux_dir"
+        fi
+
         # 不起作用
         # 好像跟 extlinux --once 有冲突
         sed -i "/^MENU HIDDEN/d" "$target_cfg"
@@ -5690,17 +5696,18 @@ LABEL reinstall
 $BOOT_ENTEY_END_MARK
 EOF
         # 设置重启引导项
-        extlinux --once=reinstall $extlinux_dir
-
-        # 复制文件到 extlinux 工作目录
-        if is_boot_in_separate_partition; then
-            info "copying files to $extlinux_dir"
-            cp_boot_files_to_dir "$extlinux_dir"
-        fi
+        extlinux --once=reinstall "$extlinux_dir"
 
     elif is_use_local_limine; then
         info limine
         echo "$target_cfg"
+
+        # 复制文件到 boot/limine 分区根目录
+        if is_boot_in_separate_partition; then
+            root_dir_of_boot_part=$(get_root_of_mount_point_for_path "$target_cfg")
+            info "copying files to $root_dir_of_boot_part"
+            cp_boot_files_to_dir "$root_dir_of_boot_part"
+        fi
 
         # 添加条目
         del_empty_lines <<EOF | tee -a "$target_cfg"
@@ -5716,13 +5723,6 @@ EOF
         # 设置默认
         sed -i "/^default_entry:/d" "$target_cfg"
         echo "default_entry: $(get_entry_name)" | insert_into_file "$target_cfg" head
-
-        # 复制文件到 boot/limine 分区根目录
-        if is_boot_in_separate_partition; then
-            root_dir_of_boot_part=$(get_root_of_mount_point_for_path "$target_cfg")
-            info "copying files to $root_dir_of_boot_part"
-            cp_boot_files_to_dir "$root_dir_of_boot_part"
-        fi
 
     else
         # cloudcone 从光驱的 grub 启动，再加载硬盘的 grub.cfg
